@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Matrix Rain</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+        }
+
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Settings panel — top right */
+        #panel {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 20, 0, 0.85);
+            border: 1px solid #00ff41;
+            padding: 16px 20px;
+            z-index: 10;
+            min-width: 220px;
+        }
+
+        #panel h2 {
+            color: #00ff41;
+            font-size: 13px;
+            letter-spacing: 3px;
+            margin-bottom: 14px;
+            text-shadow: 0 0 8px #00ff41;
+        }
+
+        #panel label {
+            display: block;
+            color: #008f11;
+            font-size: 11px;
+            margin-top: 10px;
+            margin-bottom: 3px;
+            letter-spacing: 1px;
+        }
+
+        #panel select,
+        #panel input[type=range] {
+            width: 100%;
+            background: #001400;
+            color: #00ff41;
+            border: 1px solid #004400;
+            padding: 4px 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        #panel input[type=range] {
+            padding: 0;
+            accent-color: #00ff41;
+        }
+
+        #panel .slider-val {
+            color: #00ff41;
+            font-size: 11px;
+            text-align: right;
+            margin-top: 2px;
+        }
+
+        #panel button {
+            margin-top: 16px;
+            width: 100%;
+            background: #003300;
+            color: #00ff41;
+            border: 1px solid #00ff41;
+            padding: 7px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            letter-spacing: 2px;
+            cursor: pointer;
+        }
+
+        #panel button:hover {
+            background: #00ff41;
+            color: #000;
+        }
+    </style>
+</head>
+
+<body>
+
+    <canvas id="matrix"></canvas>
+
+    <!-- Settings panel -->
+    <div id="panel">
+        <h2>[ MATRIX RAIN ]</h2>
+
+        <label>PALETTE</label>
+        <select id="palette">
+            {% for p in palettes %}
+            <option value="{{ p }}" {% if p==palette %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+        </select>
+
+        <label>CHARACTER SET</label>
+        <select id="chars">
+            {% for c in char_sets %}
+            <option value="{{ c }}" {% if c==chars %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+        </select>
+
+        <label>SPEED</label>
+        <input type="range" id="speed" min="0.2" max="3.0" step="0.1" value="{{ speed }}">
+        <div class="slider-val" id="speed-val">{{ speed }}</div>
+
+        <label>DENSITY</label>
+        <input type="range" id="density" min="0.1" max="1.0" step="0.1" value="{{ density }}">
+        <div class="slider-val" id="density-val">{{ density }}</div>
+
+        <button onclick="applySettings()">APPLY</button>
+    </div>
+
+    <script>
+        // ── Palette definitions (mirrors colors.py) ──────────────────────
+        const PALETTES = {
+            green: { head: [220, 255, 220], bright: [0, 255, 70], dim: [0, 80, 20] },
+            blue: { head: [220, 230, 255], bright: [50, 120, 255], dim: [10, 30, 80] },
+            red: { head: [255, 220, 220], bright: [255, 40, 40], dim: [80, 5, 5] },
+            gold: { head: [255, 255, 200], bright: [255, 200, 0], dim: [80, 55, 0] },
+            purple: { head: [240, 220, 255], bright: [180, 0, 255], dim: [60, 0, 80] },
+            white: { head: [255, 255, 255], bright: [200, 200, 200], dim: [60, 60, 60] },
+        };
+
+        // ── Character sets (mirrors engine.py) ───────────────────────────
+        const CHAR_SETS = {
+            katakana: "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ".split(""),
+            binary: "01".split(""),
+            hex: "0123456789ABCDEF".split(""),
+            latin: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".split(""),
+            mixed: "アイウエオカキクケコ0123456789ABCDEF!@#$%^&*".split(""),
+        };
+
+        // ── Settings (injected by Flask via Jinja) ────────────────────────
+        let currentPalette = "{{ palette }}";
+        let currentChars = "{{ chars }}";
+        let currentSpeed = {{ speed }};
+        let currentDensity = {{ density }};
+
+        // ── Canvas setup ─────────────────────────────────────────────────
+        const canvas = document.getElementById("matrix");
+        const ctx = canvas.getContext("2d");
+        const FONT_SIZE = 16;
+
+        let cols, drops, trailLengths, active;
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            init();
+        }
+
+        function init() {
+            cols = Math.floor(canvas.width / FONT_SIZE);
+            drops = Array.from({ length: cols }, () => Math.random() * -50);
+            trailLengths = Array.from({ length: cols }, () => 8 + Math.floor(Math.random() * 22));
+            active = Array.from({ length: cols }, () => Math.random() < currentDensity);
+        }
+
+        window.addEventListener("resize", resize);
+        resize();
+
+        // ── Colour helpers ────────────────────────────────────────────────
+        function lerp(a, b, t) {
+            return [
+                Math.floor(a[0] + (b[0] - a[0]) * t),
+                Math.floor(a[1] + (b[1] - a[1]) * t),
+                Math.floor(a[2] + (b[2] - a[2]) * t),
+            ];
+        }
+
+        function rgb(c) { return `rgb(${c[0]},${c[1]},${c[2]})`; }
+
+        // ── Draw loop ─────────────────────────────────────────────────────
+        function draw() {
+            const p = PALETTES[currentPalette];
+            const chars = CHAR_SETS[currentChars];
+
+            // Fade trail with semi-transparent black overlay
+            ctx.fillStyle = "rgba(0,0,0,0.055)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.font = `${FONT_SIZE}px 'Courier New', monospace`;
+
+            for (let i = 0; i < cols; i++) {
+                if (!active[i]) continue;
+
+                const headY = Math.floor(drops[i]);
+                const char = chars[Math.floor(Math.random() * chars.length)];
+
+                // Head — bright
+                if (headY >= 0 && headY * FONT_SIZE < canvas.height) {
+                    ctx.fillStyle = rgb(p.head);
+                    ctx.shadowColor = rgb(p.bright);
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(char, i * FONT_SIZE, headY * FONT_SIZE);
+                }
+
+                // Trail — fade from bright to dim
+                const trail = trailLengths[i];
+                for (let t = 1; t < trail; t++) {
+                    const ty = headY - t;
+                    if (ty < 0 || ty * FONT_SIZE >= canvas.height) continue;
+                    const fade = t / trail;
+                    const color = lerp(p.bright, p.dim, fade);
+                    ctx.fillStyle = rgb(color);
+                    ctx.shadowBlur = 0;
+                    ctx.fillText(char, i * FONT_SIZE, ty * FONT_SIZE);
+                }
+
+                ctx.shadowBlur = 0;
+
+                // Advance drop
+                drops[i] += 0.4 + Math.random() * 0.3 * currentSpeed;
+
+                // Reset when tail clears bottom
+                if (drops[i] - trail > canvas.height / FONT_SIZE) {
+                    if (Math.random() > 0.97) {
+                        drops[i] = Math.random() * -20;
+                        trailLengths[i] = 8 + Math.floor(Math.random() * 22);
+                        active[i] = Math.random() < currentDensity;
+                    }
+                }
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        draw();
+
+        // ── Slider labels ─────────────────────────────────────────────────
+        document.getElementById("speed").addEventListener("input", e => {
+            document.getElementById("speed-val").textContent = e.target.value;
+        });
+        document.getElementById("density").addEventListener("input", e => {
+            document.getElementById("density-val").textContent = e.target.value;
+        });
+
+        // ── Apply settings without page reload ───────────────────────────
+        function applySettings() {
+            currentPalette = document.getElementById("palette").value;
+            currentChars = document.getElementById("chars").value;
+            currentSpeed = parseFloat(document.getElementById("speed").value);
+            currentDensity = parseFloat(document.getElementById("density").value);
+            init();  // re-randomise columns with new density
+        }
+    </script>
+</body>
+
+</html>
