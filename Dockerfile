@@ -27,13 +27,12 @@ RUN ls -la /app/venv/bin/gunicorn
 # ── Stage 2: runtime ──────────────────────────────────────────────
 FROM alpine:3.19 AS runtime
 
-LABEL maintainer="platform-team" \
-    description="Matrix rain — terminal + web" \
-    version="2.0.0"
+LABEL org.opencontainers.image.authors="Lalit Mishra" \
+    org.opencontainers.image.description="Container image for https://github.com/lalitmishra0987/cmatrix-application"
 
-RUN apk add --no-cache \
-    python3 \
-    libffi
+RUN apk update --no-cache && \
+    apk add python3 libffi && \
+    adduser -g "Thomas Anderson" -s /usr/bin/nologin -D -H thomas
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -41,9 +40,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     COLORTERM=truecolor \
     PATH="/app/venv/bin:$PATH" \
     VIRTUAL_ENV=/app/venv
-
-# Create non-root user
-RUN adduser -D -u 1001 appuser
 
 # Copy venv from builder — must happen before USER switch
 COPY --from=builder /app/venv /app/venv
@@ -53,12 +49,13 @@ COPY --from=builder /build/matrix_app.py /app/
 COPY --from=builder /build/app.py /app/
 COPY --from=builder /build/templates /app/templates/
 
-# Set ownership of everything under /app to appuser
-RUN chown -R appuser:appuser /app
+# Give thomas ownership of everything under /app
+# Must be done as root before switching to thomas
+RUN chown -R thomas:thomas /app
 
 WORKDIR /app
 
-USER appuser
+USER thomas
 
 EXPOSE 8080
 
